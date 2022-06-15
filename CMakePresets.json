@@ -1,0 +1,71 @@
+{
+    "version": 4,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default",
+            "description": "Sets Ninja generator, build and install directory",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror -pedantic",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -Werror -pedantic"
+            },
+            "toolchainFile": "${env:VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "environment": {
+                "CC": "gcc-12",
+                "CXX": "g++-12"
+            },
+            "warnings": {
+                "dev": false
+            }
+        },
+        {
+            "name": "asan_ubsan",
+            "inherits": "default",
+            "displayName": "ASan+UBSan",
+            "description": "Address and Undefined behaviour sanitizer build",
+            "cacheVariables": {
+                "CMAKE_C_FLAGS": "-Wall -Wextra -Werror -pedantic -fsanitize=address -fsanitize=undefined",
+                "CMAKE_CXX_FLAGS": "-Wall -Wextra -Werror -pedantic -fsanitize=address -fsanitize=undefined"
+            }
+        },
+        {
+            "name": "release",
+            "inherits": "default",
+            "displayName": "Release",
+            "description": "Release build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "displayName": "Default Verbose",
+            "description": "Verbose Build",
+            "verbose": true,
+            "configurePreset": "default"
+        },
+        {
+            "name": "asan_ubsan",
+            "displayName": "ASan+UBSan Verbose",
+            "inherits": "default",
+            "configurePreset": "asan_ubsan"
+        },
+        {
+            "name": "release",
+            "displayName": "Release Verbose",
+            "inherits": "default",
+            "configurePreset": "release"
+        }
+    ],
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 22,
+        "patch": 0
+    }
+}

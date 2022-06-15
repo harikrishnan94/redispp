@@ -4,7 +4,7 @@ ARG VARIANT=ubuntu-22.04
 FROM mcr.microsoft.com/vscode/devcontainers/cpp:0-${VARIANT}
 
 RUN apt update && export DEBIAN_FRONTEND=noninteractive \
-    && apt -y install --no-install-recommends software-properties-common cmake-format \
+    && apt -y install --no-install-recommends software-properties-common cmake-format ccache \
     && add-apt-repository ppa:ubuntu-toolchain-r/test \
     && apt update \
     && apt -y install g++-12
