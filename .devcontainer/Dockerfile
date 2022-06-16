@@ -43,5 +43,5 @@ RUN wget -c https://github.com/clangd/clangd/releases/download/14.0.3/clangd-lin
     && rm clangd.zip
 
 # Install Boost
-RUN vcpkg install boost-asio
+RUN vcpkg install boost fmt
 
