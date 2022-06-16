@@ -26,7 +26,7 @@ RUN cd /tmp && wget -c \
 # VCPKG
 # Add vcpkg to PATH
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
-ENV VCPKG_ROOT=/usr/local/vcpkg
+ENV VCPKG_ROOT=/vcpkg
 ENV PATH="${PATH}:${VCPKG_ROOT}"
 
 ARG VCPKG_RELEASE=2022.05.10
