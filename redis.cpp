@@ -135,6 +135,8 @@ class MessageReader {
       std::string_view buf = {static_cast<const char*>(m_mem.data() + m_cursor), m_buflen};
       const auto dl_pos = buf.find_first_of(MessagePartTerminator);
 
+      fmt::print("Buf = {}\n", buf);
+
       if (dl_pos != std::string_view::npos) {
         msg_part += buf.substr(0, dl_pos);
         m_cursor += dl_pos + MessagePartTerminator.length();
@@ -159,9 +161,12 @@ class MessageReader {
       m_cursor = 1;
       m_buflen = 1;
     }
+    auto readpos = m_cursor;
     while (m_buflen < MessagePartTerminator.length()) {
-      boost::asio::mutable_buffer buf(m_mem.data() + m_cursor, m_mem.size() - m_cursor - m_buflen);
-      co_await m_socket->async_read_some(buf, use_awaitable);
+      boost::asio::mutable_buffer buf(m_mem.data() + readpos, m_mem.size() - readpos);
+      auto n = co_await m_socket->async_read_some(buf, use_awaitable);
+      m_buflen += n;
+      readpos += n;
     }
   }
 
