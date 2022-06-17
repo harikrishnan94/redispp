@@ -172,7 +172,7 @@ class MessageReader {
     if (m_buflen == 0) {
       m_cursor = 0;
     } else {
-      m_cursor -= readlen;
+      m_cursor += readlen;
     }
     return readlen;
   }
