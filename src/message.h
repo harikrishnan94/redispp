@@ -17,7 +17,7 @@ struct ErrorMessage {
 };
 using SingularMessage = std::variant<Integer, Str, String, ErrorMessage>;
 using MessageArray = std::optional<std::pmr::vector<SingularMessage>>;
-using Message = std::variant<std::monostate, SingularMessage, MessageArray>;
+using Message = std::variant<SingularMessage, MessageArray>;
 
 static constexpr std::string_view MessagePartTerminator = "\r\n";
 
