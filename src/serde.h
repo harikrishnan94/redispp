@@ -7,27 +7,11 @@
 #include <charconv>
 #include <concepts>
 #include <cstddef>
-#include <memory_resource>
-#include <optional>
 #include <string_view>
-#include <variant>
-#include <vector>
+
+#include "message.h"
 
 namespace redispp {
-enum class MessageTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
-
-using Integer = std::int64_t;
-using Str = std::pmr::string;
-using String = std::optional<Str>;
-struct ErrorMessage {
-  Str msg;
-};
-using SingularMessage = std::variant<Integer, Str, String, ErrorMessage>;
-using MessageArray = std::optional<std::pmr::vector<SingularMessage>>;
-using Message = std::variant<std::monostate, SingularMessage, MessageArray>;
-
-static constexpr std::string_view MessagePartTerminator = "\r\n";
-
 template <typename T>
 concept IReader = requires(T a, char* buf, size_t len) {
   { ReadSome(a, buf, len) } -> std::same_as<boost::asio::awaitable<size_t>>;
