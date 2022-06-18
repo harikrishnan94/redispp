@@ -22,7 +22,9 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
 #include <charconv>
+#include <cstddef>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <variant>
@@ -42,12 +44,12 @@ namespace this_coro = boost::asio::this_coro;
 enum class MessageTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
 
 using Integer = std::int64_t;
-using String = std::string;
+using String = std::optional<std::string>;
 struct ErrorMessage {
-  String msg;
+  std::string msg;
 };
-using SingularMessage = std::variant<Integer, String, ErrorMessage>;
-using MessageArray = std::vector<SingularMessage>;
+using SingularMessage = std::variant<Integer, std::string, String, ErrorMessage>;
+using MessageArray = std::optional<std::vector<SingularMessage>>;
 using Message = std::variant<std::monostate, SingularMessage, MessageArray>;
 
 static constexpr std::string_view MessagePartTerminator = "\r\n";
@@ -63,14 +65,17 @@ class MessageReader {
     }
 
     const auto count = co_await read_integer();
-    MessageArray msgs(count);
+    if (count < 0) {
+      co_return MessageArray{};
+    }
+    std::vector<SingularMessage> msgs(count);
 
     for (auto& msg : msgs) {
       const auto msg_type = co_await read_msg_type_marker();
       msg = co_await read_single_message(msg_type);
     }
 
-    co_return msgs;
+    co_return std::move(msgs);
   }
 
  private:
@@ -84,8 +89,11 @@ class MessageReader {
     co_return msg_type;
   }
 
-  auto read_bulk_string(size_t len) -> awaitable<String> {
-    String str(len + MessagePartTerminator.length(), '\0');
+  auto read_bulk_string(ptrdiff_t len) -> awaitable<String> {
+    if (len == -1) {
+      co_return std::nullopt;
+    }
+    std::string str(len + MessagePartTerminator.length(), '\0');
     size_t copied = 0;
 
     while (copied < str.length()) {
@@ -101,10 +109,10 @@ class MessageReader {
     str.pop_back();
     str.pop_back();
 
-    co_return str;
+    co_return std::move(str);
   }
 
-  auto read_simple_string() -> awaitable<String> { co_return co_await read_one_part(); }
+  auto read_simple_string() -> awaitable<std::string> { co_return co_await read_one_part(); }
 
   auto read_integer() -> awaitable<Integer> {
     auto int_str = co_await read_one_part();
@@ -141,8 +149,8 @@ class MessageReader {
     }
   }
 
-  auto read_one_part() -> awaitable<String> {
-    String msg_part;
+  auto read_one_part() -> awaitable<std::string> {
+    std::string msg_part;
 
     while (true) {
       co_await read_some();
@@ -207,12 +215,19 @@ class MessageReader {
   tcp::socket* m_socket;
 };
 
+auto MessageToString(const std::string& s) -> std::string {
+  return fmt::format("{}{}{}", static_cast<char>(MessageTypeMarker::SimpleString), s, MessagePartTerminator);
+}
+
 auto MessageToString(const String& s) -> std::string {
+  if (!s) {
+    return "$-1\r\n";
+  }
   return fmt::format("{}{}{}{}{}",
                      static_cast<char>(MessageTypeMarker::BulkString),
-                     s.length(),
+                     s->length(),
                      MessagePartTerminator,
-                     s,
+                     *s,
                      MessagePartTerminator);
 }
 
@@ -229,11 +244,15 @@ auto MessageToString(const ErrorMessage& msg) -> std::string {
 }
 
 auto MessageToString(const MessageArray& msgs) -> std::string {
+  if (!msgs) {
+    return "*-1\r\n";
+  }
   std::string str(1, static_cast<char>(MessageTypeMarker::Array));
 
-  str += std::to_string(msgs.size());
+  str += std::to_string(msgs->size());
+  str += MessagePartTerminator;
 
-  for (const auto& msg : msgs) {
+  for (const auto& msg : *msgs) {
     str += MessageToString(msg);
   }
 
