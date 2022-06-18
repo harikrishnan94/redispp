@@ -57,7 +57,7 @@ class MessageReader {
 
  private:
   auto read_msg_type_marker() -> MessageTypeMarker {
-    read_more();
+    read_some();
 
     auto msg_type = static_cast<MessageTypeMarker>(m_mem[m_cursor]);
     m_cursor += 1;
@@ -71,7 +71,7 @@ class MessageReader {
     size_t copied = 0;
 
     while (copied < str.length()) {
-      read_more();
+      read_some();
       copied += copy_some(str.data() + copied, str.length() - copied);
     }
 
@@ -107,7 +107,7 @@ class MessageReader {
         return read_simple_string();
 
       case Error:
-        return ErrorMessage{read_one_part()};
+        return ErrorMessage{read_simple_string()};
 
       case Integer:
         return read_integer();
@@ -125,10 +125,10 @@ class MessageReader {
     String msg_part;
 
     while (true) {
-      read_more();
+      read_some();
 
       std::string_view buf = {static_cast<const char*>(m_mem.data() + m_cursor), m_buflen};
-      const auto dl_pos = buf.find_first_of(MessagePartTerminator);
+      const auto dl_pos = buf.find(MessagePartTerminator);
 
       if (dl_pos != std::string_view::npos) {
         msg_part += buf.substr(0, dl_pos);
@@ -148,16 +148,16 @@ class MessageReader {
     return msg_part;
   }
 
-  auto read_more() -> void {
-    if (m_buflen + m_cursor == m_mem.size()) {
-      return;
+  auto read_some() -> void {
+    if (m_buflen == 0) {
+      m_cursor = 0;
     }
     if (m_buflen == 1) {
       m_mem[0] = m_mem[m_cursor];
-      m_cursor = 1;
+      m_cursor = 0;
       m_buflen = 1;
     }
-    auto readpos = m_cursor;
+    auto readpos = m_cursor + m_buflen;
     while (m_buflen < MessagePartTerminator.length()) {
       auto n = m_in->readsome(m_mem.data() + readpos, m_mem.size() - readpos);
       m_buflen += n;
@@ -178,6 +178,8 @@ class MessageReader {
   }
 
   static constexpr auto BufferSize = 1024;
+  static_assert(BufferSize >= MessagePartTerminator.size());
+
   std::array<char, BufferSize> m_mem{};
   size_t m_cursor = 0;
   size_t m_buflen = 0;
