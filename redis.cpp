@@ -231,7 +231,7 @@ auto MessageToString(const ErrorMessage& msg) -> std::string {
 auto MessageToString(const MessageArray& msgs) -> std::string {
   std::string str(1, static_cast<char>(MessageTypeMarker::Array));
 
-  str += MessageToString(msgs.size());
+  str += std::to_string(msgs.size());
 
   for (const auto& msg : msgs) {
     str += MessageToString(msg);
