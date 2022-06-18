@@ -12,14 +12,32 @@
 
 #include <algorithm>
 #include <array>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/read.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
 #include <charconv>
 #include <cstdio>
-#include <iostream>
-#include <sstream>
 #include <string>
 #include <system_error>
 #include <variant>
 #include <vector>
+
+using boost::asio::awaitable;
+using boost::asio::co_spawn;
+using boost::asio::detached;
+using boost::asio::use_awaitable;
+using boost::asio::ip::tcp;
+namespace this_coro = boost::asio::this_coro;
+
+#if defined(BOOST_ASIO_ENABLE_HANDLER_TRACKING)
+#define use_awaitable boost::asio::use_awaitable_t(__FILE__, __LINE__, __PRETTY_FUNCTION__)
+#endif
 
 enum class MessageTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
 
@@ -36,42 +54,42 @@ static constexpr std::string_view MessagePartTerminator = "\r\n";
 
 class MessageReader {
  public:
-  explicit MessageReader(std::istream& in) : m_in(&in) {}
+  explicit MessageReader(tcp::socket& socket) : m_socket(&socket) {}
 
-  auto ReadMessage() -> Message {
-    const auto msg_type = read_msg_type_marker();
+  auto ReadMessage() -> awaitable<Message> {
+    const auto msg_type = co_await read_msg_type_marker();
     if (msg_type != MessageTypeMarker::Array) {
-      return read_single_message(msg_type);
+      co_return co_await read_single_message(msg_type);
     }
 
-    const auto count = read_integer();
+    const auto count = co_await read_integer();
     MessageArray msgs(count);
 
     for (auto& msg : msgs) {
-      const auto msg_type = read_msg_type_marker();
-      msg = read_single_message(msg_type);
+      const auto msg_type = co_await read_msg_type_marker();
+      msg = co_await read_single_message(msg_type);
     }
 
-    return msgs;
+    co_return msgs;
   }
 
  private:
-  auto read_msg_type_marker() -> MessageTypeMarker {
-    read_some();
+  auto read_msg_type_marker() -> awaitable<MessageTypeMarker> {
+    co_await read_some();
 
     auto msg_type = static_cast<MessageTypeMarker>(m_mem[m_cursor]);
     m_cursor += 1;
     m_buflen -= 1;
 
-    return msg_type;
+    co_return msg_type;
   }
 
-  auto read_bulk_string(size_t len) -> String {
+  auto read_bulk_string(size_t len) -> awaitable<String> {
     String str(len + MessagePartTerminator.length(), '\0');
     size_t copied = 0;
 
     while (copied < str.length()) {
-      read_some();
+      co_await read_some();
       copied += copy_some(str.data() + copied, str.length() - copied);
     }
 
@@ -83,37 +101,37 @@ class MessageReader {
     str.pop_back();
     str.pop_back();
 
-    return str;
+    co_return str;
   }
 
-  auto read_simple_string() -> String { return read_one_part(); }
+  auto read_simple_string() -> awaitable<String> { co_return co_await read_one_part(); }
 
-  auto read_integer() -> Integer {
-    auto int_str = read_one_part();
+  auto read_integer() -> awaitable<Integer> {
+    auto int_str = co_await read_one_part();
     Integer i = 0;
     auto res = std::from_chars(int_str.begin().base(), int_str.end().base(), i);
     if (res.ec != std::errc{}) {
       throw std::system_error(make_error_code(res.ec));
     }
 
-    return i;
+    co_return i;
   }
 
-  auto read_single_message(MessageTypeMarker msg_type) -> SingularMessage {
+  auto read_single_message(MessageTypeMarker msg_type) -> awaitable<SingularMessage> {
     switch (msg_type) {
       using enum MessageTypeMarker;
 
       case SimpleString:
-        return read_simple_string();
+        co_return co_await read_simple_string();
 
       case Error:
-        return ErrorMessage{read_simple_string()};
+        co_return ErrorMessage{co_await read_simple_string()};
 
       case Integer:
-        return read_integer();
+        co_return co_await read_integer();
 
       case BulkString:
-        return read_bulk_string(read_integer());
+        co_return co_await read_bulk_string(co_await read_integer());
 
       case Array:
       default:
@@ -121,11 +139,11 @@ class MessageReader {
     }
   }
 
-  auto read_one_part() -> String {
+  auto read_one_part() -> awaitable<String> {
     String msg_part;
 
     while (true) {
-      read_some();
+      co_await read_some();
 
       std::string_view buf = {static_cast<const char*>(m_mem.data() + m_cursor), m_buflen};
       const auto dl_pos = buf.find(MessagePartTerminator);
@@ -145,10 +163,10 @@ class MessageReader {
       m_buflen -= buf.size();
     }
 
-    return msg_part;
+    co_return msg_part;
   }
 
-  auto read_some() -> void {
+  auto read_some() -> awaitable<void> {
     if (m_buflen == 0) {
       m_cursor = 0;
     }
@@ -159,7 +177,8 @@ class MessageReader {
     }
     auto readpos = m_cursor + m_buflen;
     while (m_buflen < MessagePartTerminator.length()) {
-      auto n = m_in->readsome(m_mem.data() + readpos, m_mem.size() - readpos);
+      boost::asio::mutable_buffer buf(m_mem.data() + readpos, m_mem.size() - readpos);
+      auto n = co_await m_socket->async_read_some(buf, use_awaitable);
       m_buflen += n;
       readpos += n;
     }
@@ -183,7 +202,7 @@ class MessageReader {
   std::array<char, BufferSize> m_mem{};
   size_t m_cursor = 0;
   size_t m_buflen = 0;
-  std::istream* m_in;
+  tcp::socket* m_socket;
 };
 
 auto MessageToString(const String& s) -> std::string {
@@ -223,40 +242,39 @@ auto MessageToString(const Message& msg) -> std::string {
   return std::visit([](const auto& msg) { return MessageToString(msg); }, msg);
 }
 
-auto run_session(std::istream& in) -> void {
+auto run_session(tcp::socket socket) -> awaitable<void> {
   try {
-    MessageReader reader(in);
-    while (in) {
-      auto msg = reader.ReadMessage();
-      fmt::print("{}", MessageToString(msg));
+    MessageReader reader(socket);
+    for (;;) {
+      auto msg = co_await reader.ReadMessage();
+      auto str = MessageToString(msg);
+      co_await boost::asio::async_write(socket, boost::asio::buffer(str.data(), str.size()), use_awaitable);
     }
   } catch (std::exception& e) {
-    std::printf("echo Exception: %s\n", e.what());
+    fmt::print("echo Exception: {}\n", e.what());
   }
 }
 
-// awaitable<void> listener() {
-//   auto executor = co_await this_coro::executor;
-//   tcp::acceptor acceptor(executor, {tcp::v4(), 55555});
-//   for (;;) {
-//     tcp::socket socket = co_await acceptor.async_accept(use_awaitable);
-//     co_spawn(executor, run_session(std::move(socket)), detached);
-//   }
-// }
+auto listener() -> awaitable<void> {
+  auto executor = co_await this_coro::executor;
+  tcp::acceptor acceptor(executor, {tcp::v4(), 55555});
+  for (;;) {
+    tcp::socket socket = co_await acceptor.async_accept(use_awaitable);
+    co_spawn(executor, run_session(std::move(socket)), detached);
+  }
+}
 
 auto main() -> int {
   try {
-    std::istringstream input(
-        ":1000\r\n$306\r\n// awaitable<void> listener() {"
-        "//   auto executor = co_await this_coro::executor;"
-        "//   tcp::acceptor acceptor(executor, {tcp::v4(), 55555});"
-        "//   for (;;) {"
-        "//     tcp::socket socket = co_await acceptor.async_accept(use_awaitable);"
-        "//     co_spawn(executor, run_session(std::move(socket)), detached);"
-        "//   }"
-        "// }\r\n+OK\r\n-Error message\r\n");
-    run_session(input);
+    boost::asio::io_context io_context(1);
+
+    boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
+    signals.async_wait([&](auto, auto) { io_context.stop(); });
+
+    co_spawn(io_context, listener(), detached);
+    io_context.run();
+
   } catch (std::exception& e) {
-    std::printf("Exception: %s\n", e.what());
+    fmt::print("Exception: {}\n", e.what());
   }
 }
