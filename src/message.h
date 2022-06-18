@@ -15,9 +15,13 @@ using String = std::optional<Str>;
 struct ErrorMessage {
   Str msg;
 };
+struct InlineMessage {
+  std::pmr::string msg_str;
+  std::pmr::vector<std::string_view> parts;
+};
 using SingularMessage = std::variant<Integer, Str, String, ErrorMessage>;
 using MessageArray = std::optional<std::pmr::vector<SingularMessage>>;
-using Message = std::variant<SingularMessage, MessageArray>;
+using Message = std::variant<SingularMessage, InlineMessage, MessageArray>;
 
 static constexpr std::string_view MessagePartTerminator = "\r\n";
 

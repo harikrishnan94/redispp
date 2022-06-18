@@ -7,7 +7,9 @@
 #include <charconv>
 #include <concepts>
 #include <cstddef>
+#include <optional>
 #include <string_view>
+#include <vector>
 
 #include "message.h"
 
@@ -26,8 +28,11 @@ class Parser {
 
   auto ParseMessage() -> boost::asio::awaitable<Message> {
     const auto msg_type = co_await read_msg_type_marker();
-    if (msg_type != MessageTypeMarker::Array) {
-      co_return co_await read_single_message(msg_type);
+    if (!msg_type) {
+      co_return co_await read_inline_command();
+    }
+    if (*msg_type != MessageTypeMarker::Array) {
+      co_return co_await read_single_message(*msg_type);
     }
 
     const auto count = co_await read_integer();
@@ -38,17 +43,55 @@ class Parser {
 
     for (auto& msg : msgs) {
       const auto msg_type = co_await read_msg_type_marker();
-      msg = co_await read_single_message(msg_type);
+      if (!msg_type) {
+        throw std::runtime_error("Encountered inline command inside array");
+      }
+      msg = co_await read_single_message(*msg_type);
     }
 
     co_return std::move(msgs);
   }
 
  private:
-  auto read_msg_type_marker() -> boost::asio::awaitable<MessageTypeMarker> {
+  auto read_single_message(MessageTypeMarker msg_type) -> boost::asio::awaitable<SingularMessage> {
+    switch (msg_type) {
+      using enum MessageTypeMarker;
+
+      case SimpleString:
+        co_return co_await read_simple_string();
+
+      case Error: {
+        auto str = co_await read_simple_string();
+        co_return ErrorMessage{std::move(str)};
+      }
+
+      case Integer:
+        co_return co_await read_integer();
+
+      case BulkString:
+        co_return co_await read_bulk_string(co_await read_integer());
+
+      case Array:
+      default:
+        throw std::runtime_error(fmt::format("Encountered wrong message type: {}", static_cast<char>(msg_type)));
+    }
+  }
+
+  auto read_msg_type_marker() -> boost::asio::awaitable<std::optional<MessageTypeMarker>> {
     co_await read_some();
 
     auto msg_type = static_cast<MessageTypeMarker>(m_mem[m_cursor]);
+    switch (msg_type) {
+      default:
+        co_return std::nullopt;
+
+      case MessageTypeMarker::SimpleString:
+      case MessageTypeMarker::Error:
+      case MessageTypeMarker::Integer:
+      case MessageTypeMarker::BulkString:
+      case MessageTypeMarker::Array:
+        break;
+    }
     m_cursor += 1;
     m_buflen -= 1;
 
@@ -91,28 +134,23 @@ class Parser {
     co_return i;
   }
 
-  auto read_single_message(MessageTypeMarker msg_type) -> boost::asio::awaitable<SingularMessage> {
-    switch (msg_type) {
-      using enum MessageTypeMarker;
+  auto read_inline_command() -> boost::asio::awaitable<InlineMessage> {
+    auto msg_str = co_await read_one_part();
+    std::pmr::vector<std::string_view> parts(m_alloc);
+    std::string_view msg_ptr = msg_str;
+    constexpr auto Space = ' ';
 
-      case SimpleString:
-        co_return co_await read_simple_string();
-
-      case Error: {
-        auto str = co_await read_simple_string();
-        co_return ErrorMessage{std::move(str)};
+    while (true) {
+      auto pos = msg_ptr.find(Space);
+      if (pos == std::string_view::npos) {
+        parts.push_back(msg_ptr);
+        break;
       }
-
-      case Integer:
-        co_return co_await read_integer();
-
-      case BulkString:
-        co_return co_await read_bulk_string(co_await read_integer());
-
-      case Array:
-      default:
-        throw std::runtime_error(fmt::format("Encountered wrong message type: {}", static_cast<char>(msg_type)));
+      parts.push_back(msg_ptr.substr(0, pos));
+      msg_ptr = msg_ptr.substr(pos + 1);
     }
+
+    co_return InlineMessage{std::move(msg_str), std::move(parts)};
   }
 
   auto read_one_part() -> boost::asio::awaitable<Str> {
