@@ -35,13 +35,15 @@ auto Write(tcp::socket& socket, const char* buf, size_t bufsize) -> awaitable<vo
 
 auto run_session(redispp::DB& db, tcp::socket socket) -> awaitable<void> {
   try {
+    auto executor = co_await this_coro::executor;
     redispp::Client client;
     redispp::Parser parser(socket);
 
     for (;;) {
-      auto queries = co_await parser.ParseMessage();
-      auto resp = redispp::Execute(db, client, std::move(queries));
-      co_await redispp::Write(socket, resp);
+      auto query = co_await parser.ParseMessage();
+      auto resp = redispp::Execute(db, client, std::move(query));
+      // Pipeline Response
+      co_spawn(executor, redispp::Write(socket, resp), detached);
     }
   } catch (std::exception& e) {
     fmt::print("echo Exception: {}\n", e.what());

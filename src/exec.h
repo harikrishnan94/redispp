@@ -4,5 +4,5 @@
 #include "serde.h"
 
 namespace redispp {
-auto Execute(DB &db, Client &client, Message queries) -> Message;
+auto Execute(DB &db, Client &client, Message query) -> Message;
 }  // namespace redispp

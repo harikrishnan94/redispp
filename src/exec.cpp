@@ -26,5 +26,5 @@ void to_str(std::pmr::string &str, Integer i) {
   fmt::format_to(std::back_inserter(str), "{}", i);
 }
 
-auto Execute(DB & /*db*/, Client & /*client*/, Message /*queries*/) -> Message { return {}; }
+auto Execute(DB & /*db*/, Client & /*client*/, Message /*query*/) -> Message { return {}; }
 }  // namespace redispp
