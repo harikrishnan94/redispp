@@ -124,8 +124,10 @@ class MessageReader {
       case SimpleString:
         co_return co_await read_simple_string();
 
-      case Error:
-        co_return ErrorMessage{co_await read_simple_string()};
+      case Error: {
+        auto str = co_await read_simple_string();
+        co_return ErrorMessage{std::move(str)};
+      }
 
       case Integer:
         co_return co_await read_integer();
