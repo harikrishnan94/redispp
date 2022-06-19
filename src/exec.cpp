@@ -332,8 +332,6 @@ auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio:
     throw ExecutionException("EXTRA_ARGUMENTS_TO_COMMAND");
   }
 
-  auto response = execute(db, client, std::move(command));
-
-  co_return response;
+  co_return execute(db, client, std::move(command));
 }
 }  // namespace redispp
