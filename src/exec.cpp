@@ -1,18 +1,14 @@
 #include "exec.h"
 
-#include <charconv>
-#include <cstddef>
-#include <exception>
-#include <functional>
-#include <iterator>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <system_error>
-#include <unordered_map>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <variant>
 
-#include "message.h"
+#include "resp_serde.h"
+
+using namespace boost::asio::experimental::awaitable_operators;
 
 namespace redispp {
 // class ExecutionException : std::exception {
@@ -60,100 +56,6 @@ namespace redispp {
 //   throw ExecutionException{"WRONG_INPUT_TYPE Expected String"};
 // }
 
-// struct AppendCmd {
-//   Str key;
-//   Str val;
-
-//   static constexpr std::string_view Name = "APPEND";
-// };
-
-// struct DecrCmd {
-//   Str key;
-
-//   static constexpr std::string_view Name = "DECR";
-// };
-
-// struct DecrByCmd {
-//   Str key;
-//   Integer val;
-
-//   static constexpr std::string_view Name = "DECRBY";
-// };
-
-// struct GetCmd {
-//   Str key;
-
-//   static constexpr std::string_view Name = "GET";
-// };
-
-// struct GetDelCmd {
-//   Str key;
-
-//   static constexpr std::string_view Name = "GETDEL";
-// };
-
-// struct GetRangeCmd {
-//   Str key;
-//   size_t start;
-//   size_t end;
-
-//   static constexpr std::string_view Name = "GETRANGE";
-// };
-
-// struct GetSetCmd {
-//   Str key;
-//   Str val;
-
-//   static constexpr std::string_view Name = "GETSET";
-// };
-
-// struct IncrCmd {
-//   Str key;
-
-//   static constexpr std::string_view Name = "INCR";
-// };
-
-// struct IncrByCmd {
-//   Str key;
-//   Integer val;
-
-//   static constexpr std::string_view Name = "INCRBY";
-// };
-
-// struct SetCmd {
-//   Str key;
-//   Str val;
-
-//   static constexpr std::string_view Name = "SET";
-// };
-
-// struct SetRangeCmd {
-//   Str key;
-//   size_t offset;
-//   Str val;
-
-//   static constexpr std::string_view Name = "SETRANGE";
-// };
-
-// struct StrLenCmd {
-//   Str key;
-
-//   static constexpr std::string_view Name = "STRLEN";
-// };
-
-// using Command = std::variant<AppendCmd,
-//                              DecrCmd,
-//                              DecrByCmd,
-//                              GetCmd,
-//                              GetDelCmd,
-//                              GetRangeCmd,
-//                              GetSetCmd,
-//                              IncrCmd,
-//                              IncrByCmd,
-//                              SetCmd,
-//                              SetRangeCmd,
-//                              StrLenCmd>;
-
 // template <typename RealCommand>
 // static auto parse(MessageArray msgs) -> Command;
 
@@ -189,5 +91,35 @@ namespace redispp {
 // } catch (ExecutionException &e) {
 //   return SingularMessage{ErrorMessage{e.error}};
 // }
-auto Execute(DB& /*db*/, Client& /*client*/, Message) -> Message { return {}; }
+
+void Response::Push(resp::Token tok) { m_tokens.push_back(std::move(tok)); }
+
+auto Response::Serialize(resp::Serializer &resp_sender) const -> boost::asio::awaitable<void> {
+  if (m_is_array) {
+    co_await resp_sender.SerializeArrayHeader(m_tokens.size());
+  }
+
+  for (const auto &tok : m_tokens) {
+    co_await resp_sender.Serialize(tok);
+  }
+}
+
+auto Execute(DB & /*db*/, Client & /*client*/, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response> {
+  auto executor = co_await boost::asio::this_coro::executor;
+  redispp::resp::Channel ch(executor);
+  Response response(true);
+
+  co_spawn(executor, query_reader.SendTokens(ch), boost::asio::detached);
+
+  while (true) {
+    auto tok = co_await ch.async_receive(boost::asio::use_awaitable);
+    if (std::holds_alternative<resp::EndOfCommand_t>(tok)) {
+      break;
+    }
+
+    response.Push(std::move(tok));
+  }
+
+  co_return response;
+}
 }  // namespace redispp

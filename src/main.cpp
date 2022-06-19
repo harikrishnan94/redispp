@@ -1,4 +1,5 @@
-#include <boost/asio/awaitable.hpp>
+#include <fmt/core.h>
+
 #include <boost/asio/buffer.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -10,7 +11,7 @@
 
 #include "db.h"
 #include "exec.h"
-#include "serde.h"
+#include "resp_serde.h"
 
 using boost::asio::awaitable;
 using boost::asio::co_spawn;
@@ -37,13 +38,17 @@ auto run_session(redispp::DB& db, tcp::socket socket) -> awaitable<void> {
   try {
     auto executor = co_await this_coro::executor;
     redispp::Client client;
-    redispp::Parser parser(socket);
+    redispp::resp::Deserializer deserializer(socket);
 
     for (;;) {
-      auto query = co_await parser.ParseMessage();
-      auto resp = redispp::Execute(db, client, std::move(query));
-      // Pipeline Response
-      co_spawn(executor, redispp::Write(socket, resp), detached);
+      auto response = co_await redispp::Execute(db, client, deserializer);
+      co_spawn(
+          executor,
+          [response = std::move(response), &socket]() -> awaitable<void> {
+            redispp::resp::Serializer serializer(socket);
+            co_return co_await response.Serialize(serializer);
+          },
+          detached);
     }
   } catch (std::exception& e) {
     fmt::print("echo Exception: {}\n", e.what());
