@@ -7,12 +7,12 @@
 #include <optional>
 
 namespace redispp::resp {
-auto Deserializer::SendTokens(Channel& ch) -> boost::asio::awaitable<void> {
+auto Deserializer::SendTokens(boost::local_shared_ptr<Channel> ch) -> boost::asio::awaitable<void> {
   const auto msg_type = co_await dser_msg_type_marker();
   if (!msg_type) {
-    co_await send_inline_tokens(ch);
+    co_await send_inline_tokens(*ch);
   } else if (*msg_type != TokenTypeMarker::Array) {
-    co_await send_token(co_await dser_single_token(*msg_type), ch);
+    co_await send_token(co_await dser_single_token(*msg_type), *ch);
   } else {
     const auto count = co_await dser_integer();
     if (count > 0) {
@@ -21,13 +21,13 @@ auto Deserializer::SendTokens(Channel& ch) -> boost::asio::awaitable<void> {
         if (!msg_type) {
           throw std::runtime_error("Encountered inline command inside array");
         }
-        co_await send_token(co_await dser_single_token(*msg_type), ch);
+        co_await send_token(co_await dser_single_token(*msg_type), *ch);
       }
     } else {
-      co_await send_token(NullArr, ch);
+      co_await send_token(NullArr, *ch);
     }
   }
-  co_return co_await send_token(EndOfCommand, ch);
+  co_return co_await send_token(EndOfCommand, *ch);
 }
 
 auto Deserializer::send_token(Token tok, Channel& ch) -> boost::asio::awaitable<void> {

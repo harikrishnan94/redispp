@@ -6,6 +6,8 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/smart_ptr/make_local_shared.hpp>
+#include <boost/smart_ptr/make_local_shared_object.hpp>
 #include <charconv>
 #include <variant>
 
@@ -317,20 +319,20 @@ static auto execute(DB &db, Client &cli, Command command) -> Response {
 
 auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio::awaitable<Response> try {
   auto executor = co_await boost::asio::this_coro::executor;
-  Channel ch(executor);
+  auto ch = boost::make_local_shared<Channel>(std::move(executor));
 
   co_spawn(executor, query_reader.SendTokens(ch), boost::asio::detached);
 
-  auto tok = co_await ch.async_receive(use_awaitable);
+  auto tok = co_await ch->async_receive(use_awaitable);
   auto it = ParseFuncs.find(get_str(tok));
   if (it == ParseFuncs.end()) {
     throw ExecutionException{"INVALID_COMMAND"};
   }
 
   const auto parse_func = it->second;
-  auto command = co_await parse_func(ch);
+  auto command = co_await parse_func(*ch);
 
-  if (!std::holds_alternative<EndOfCommand_t>(co_await ch.async_receive(use_awaitable))) {
+  if (!std::holds_alternative<EndOfCommand_t>(co_await ch->async_receive(use_awaitable))) {
     throw ExecutionException("EXTRA_ARGUMENTS_TO_COMMAND");
   }
 

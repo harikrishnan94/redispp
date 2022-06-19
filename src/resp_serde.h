@@ -2,6 +2,7 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/channel.hpp>
+#include <boost/smart_ptr/local_shared_ptr.hpp>
 #include <concepts>
 #include <cstddef>
 #include <memory_resource>
@@ -46,7 +47,7 @@ class Deserializer {
             const_cast<void*>(static_const<const void*>(&reader))),  // NOLINT(cppcoreguidelines-pro-type-const-cast)
         m_read_some(get_reader<std::decay_t<decltype(reader)>, true>()) {}
 
-  auto SendTokens(Channel& ch) -> boost::asio::awaitable<void>;
+  auto SendTokens(boost::local_shared_ptr<Channel> ch) -> boost::asio::awaitable<void>;
 
  private:
   using read_some_t = boost::asio::awaitable<size_t> (*)(void* reader, char* buf, size_t len);
