@@ -34,7 +34,7 @@ static auto to_int(std::string_view str) -> std::optional<Integer> {
   Integer i = 0;
   auto res = std::from_chars(str.begin(), str.end(), i);
 
-  if (res.ec == std::errc{}) {
+  if (res.ec != std::errc{}) {
     throw ExecutionException{"CONVERSION_ERROR Invalid Integer"};
   }
   return i;
@@ -219,6 +219,7 @@ static auto execute(DB &db, Client & /*cli*/, DecrByCmd decr) -> Response {
   if (auto *val = db.Get(decr.key)) {
     if (auto i = to_int(*val)) {
       *i -= decr.val;
+      to_str(*val, *i);
       return Token(*i);
     }
 
@@ -283,6 +284,7 @@ static auto execute(DB &db, Client & /*cli*/, IncrByCmd incr) -> Response {
   if (auto *val = db.Get(incr.key)) {
     if (auto i = to_int(*val)) {
       *i += incr.val;
+      to_str(*val, *i);
       return Token(*i);
     }
     return Token(Error{"CONVERSION_ERROR"});
@@ -313,7 +315,7 @@ static auto execute(DB &db, Client &cli, Command command) -> Response {
   return std::visit([&](auto command) { return execute(db, cli, std::move(command)); }, command);
 }
 
-auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio::awaitable<Response> {
+auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio::awaitable<Response> try {
   auto executor = co_await boost::asio::this_coro::executor;
   Channel ch(executor);
 
@@ -333,5 +335,7 @@ auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio:
   }
 
   co_return execute(db, client, std::move(command));
+} catch (ExecutionException &e) {
+  co_return Error{db.NewString(e.what())};
 }
 }  // namespace redispp
