@@ -196,8 +196,13 @@ auto Serializer::Serialize(const Token& tok) -> boost::asio::awaitable<void> {
 auto Serializer::SerializeArrayHeader(size_t elem_count) -> boost::asio::awaitable<void> {
   std::array<char, 30> count{};
 
-  fmt::format_to(count.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::Array), elem_count, MessagePartTerminator);
-  co_await write(count.data(), count.size());
+  auto res = fmt::format_to_n(count.data(),
+                              count.size(),
+                              "{}{}{}",
+                              static_cast<char>(TokenTypeMarker::Array),
+                              elem_count,
+                              MessagePartTerminator);
+  co_await write(count.data(), res.size);
 }
 
 auto Serializer::SerializeNullArray(NullArr_t /*nullarr*/) -> boost::asio::awaitable<void> {
@@ -213,9 +218,13 @@ auto Serializer::serialize(NullArr_t /*nullarr*/) -> boost::asio::awaitable<void
 auto Serializer::serialize(const String& s) -> boost::asio::awaitable<void> {
   std::array<char, 30> length{};
 
-  fmt::format_to(
-      length.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::BulkString), s.length(), MessagePartTerminator);
-  co_await write(length.data(), length.size());
+  auto res = fmt::format_to_n(length.data(),
+                              length.size(),
+                              "{}{}{}",
+                              static_cast<char>(TokenTypeMarker::BulkString),
+                              s.length(),
+                              MessagePartTerminator);
+  co_await write(length.data(), res.size);
   co_await write(s.data(), s.length());
   co_await write(MessagePartTerminator.data(), MessagePartTerminator.length());
 }
@@ -239,8 +248,9 @@ auto Serializer::serialize(const Error& err) -> boost::asio::awaitable<void> {
 auto Serializer::serialize(Integer i) -> boost::asio::awaitable<void> {
   std::array<char, 30> int_str{};
 
-  fmt::format_to(int_str.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::Integer), i, MessagePartTerminator);
-  co_await write(int_str.data(), int_str.size());
+  auto res = fmt::format_to_n(
+      int_str.data(), int_str.size(), "{}{}{}", static_cast<char>(TokenTypeMarker::Integer), i, MessagePartTerminator);
+  co_await write(int_str.data(), res.size);
 }
 
 auto Serializer::serialize(NullStr_t /*nullstr*/) -> boost::asio::awaitable<void> {
