@@ -9,21 +9,21 @@
 #include <utility>
 #include <vector>
 
-#include "message.h"
+#include "exec.h"
 #include "string_hash.h"
 
 namespace redispp {
 class DB;
 class Executor;
 
-using Transaction = std::vector<Message>;
+using Transaction = std::vector<exec::Command>;
 using ClientID = uint64_t;
 
 class Client {
  private:
   friend class Executor;
 
-  void AddQueryToCurTxn(Message query) { m_cur_txn.push_back(std::move(query)); }
+  void AddQueryToCurTxn(exec::Command query) { m_cur_txn.push_back(std::move(query)); }
 
   auto GetAndClearCurTxn() noexcept -> Transaction { return std::exchange(m_cur_txn, {}); }
 

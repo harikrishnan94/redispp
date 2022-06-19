@@ -1,82 +1,76 @@
 #include <fmt/core.h>
 
-#include <boost/asio.hpp>
-#include <boost/asio/awaitable.hpp>
-#include <boost/asio/detail/chrono.hpp>
-#include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/asio/experimental/channel.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/signal_set.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/system/detail/error_code.hpp>
-#include <boost/system/error_code.hpp>
-#include <cstddef>
-#include <string_view>
-#include <variant>
+#include <boost/asio/write.hpp>
 
+#include "db.h"
+#include "exec.h"
 #include "resp_serde.h"
 
-using namespace boost::system;
-using namespace boost::asio;
-using namespace boost::asio::experimental;
-using namespace boost::asio::experimental::awaitable_operators;
+using boost::asio::awaitable;
+using boost::asio::co_spawn;
+using boost::asio::detached;
+using boost::asio::use_awaitable;
+using boost::asio::ip::tcp;
+namespace this_coro = boost::asio::this_coro;
 
-struct StringReadState {
-  std::string_view str;
-  size_t cursor = 0;
-};
+#if defined(BOOST_ASIO_ENABLE_HANDLER_TRACKING)
+#define use_awaitable boost::asio::use_awaitable_t(__FILE__, __LINE__, __PRETTY_FUNCTION__)
+#endif
 
-auto ReadSome(StringReadState &rs, char *buf, size_t len) -> awaitable<size_t> {
-  const auto readlen = std::min(len, rs.str.length() - rs.cursor);
-  std::copy_n(rs.str.data() + rs.cursor, readlen, buf);
-  rs.cursor += readlen;
-  co_return readlen;
+namespace boost::asio {
+auto ReadSome(tcp::socket& socket, char* buf, size_t bufsize) -> awaitable<size_t> {
+  return socket.async_read_some(boost::asio::buffer(buf, bufsize), use_awaitable);
 }
 
-struct StdOutWriter_t {
-} constexpr StdOutWriter;
-
-auto Write(StdOutWriter_t /*StdOutWriter*/, const char *buf, size_t len) -> awaitable<void> {
-  fmt::print("{}", std::string_view(buf, len));
-  co_return;
+auto Write(tcp::socket& socket, const char* buf, size_t bufsize) -> awaitable<void> {
+  co_await boost::asio::async_write(socket, boost::asio::buffer(buf, bufsize), use_awaitable);
 }
+}  // namespace boost::asio
 
-auto print(redispp::resp::Channel &ch) -> awaitable<void> {
-  redispp::resp::Serializer serializer(StdOutWriter);
-  while (true) {
-    auto tok = co_await ch.async_receive(use_awaitable);
-    co_await serializer.Serialize(tok);
-    if (std::holds_alternative<redispp::resp::EndOfCommand_t>(tok)) {
-      break;
+auto run_session(redispp::DB& db, tcp::socket socket) -> awaitable<void> {
+  try {
+    auto executor = co_await this_coro::executor;
+    redispp::Client client;
+    redispp::resp::Deserializer deserializer(socket);
+    redispp::resp::Channel ch(executor);
+
+    for (;;) {
+      redispp::resp::Serializer serializer(socket);
+      co_spawn(executor, redispp::Execute(db, client, deserializer, serializer, ch), detached);
     }
+  } catch (std::exception& e) {
+    fmt::print("echo Exception: {}\n", e.what());
   }
 }
 
-auto run(io_context &ioc, std::string_view commands) -> awaitable<void> {
-  StringReadState rs{commands};
-  redispp::resp::Deserializer deserializer(rs);
-  redispp::resp::Channel ch(ioc);
-
-  co_await (deserializer.SendTokens(ch) || print(ch));
+auto listener(redispp::DB& db) -> awaitable<void> {
+  auto executor = co_await this_coro::executor;
+  tcp::acceptor acceptor(executor, {tcp::v4(), 55555});
+  for (;;) {
+    tcp::socket socket = co_await acceptor.async_accept(use_awaitable);
+    co_spawn(executor, run_session(db, std::move(socket)), detached);
+  }
 }
 
 auto main() -> int {
   try {
-    io_context io_context(1);
+    boost::asio::io_context io_context(1);
 
-    const std::string_view commands =
-        "*5\r\n:1000\r\n$306\r\n// awaitable<void> listener() {"
-        "//   auto executor = co_await this_coro::executor;"
-        "//   tcp::acceptor acceptor(executor, {tcp::v4(), 55555});"
-        "//   for (;;) {"
-        "//     tcp::socket socket = co_await acceptor.async_accept(use_awaitable);"
-        "//     co_spawn(executor, run_session(std::move(socket)), detached);"
-        "//   }"
-        "// }\r\n+OK\r\n$-1\r\n-Error message\r\n";
-    co_spawn(io_context, run(io_context, commands), detached);
+    boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
+    signals.async_wait([&](auto, auto) { io_context.stop(); });
+
+    redispp::DB db;
+    co_spawn(io_context, listener(db), detached);
     io_context.run();
 
-  } catch (std::exception &e) {
+  } catch (std::exception& e) {
     fmt::print("Exception: {}\n", e.what());
   }
 }
