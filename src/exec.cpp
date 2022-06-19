@@ -328,7 +328,7 @@ auto Execute(DB &db, Client &client, Deserializer &query_reader) -> boost::asio:
   const auto parse_func = it->second;
   auto command = co_await parse_func(ch);
 
-  if (std::holds_alternative<EndOfCommand_t>(tok)) {
+  if (!std::holds_alternative<EndOfCommand_t>(co_await ch.async_receive(use_awaitable))) {
     throw ExecutionException("EXTRA_ARGUMENTS_TO_COMMAND");
   }
 
