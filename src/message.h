@@ -7,19 +7,19 @@
 #include <vector>
 
 namespace redispp {
-enum class MessageTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
+enum class TokenTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
 
 using Integer = std::int64_t;
-using Str = std::pmr::string;
-using String = std::optional<Str>;
+using String = std::pmr::string;
+using String = std::optional<String>;
 struct ErrorMessage {
-  Str msg;
+  String msg;
 };
 struct InlineMessage {
   std::pmr::string msg_str;
   std::pmr::vector<std::string_view> parts;
 };
-using SingularMessage = std::variant<Integer, Str, String, ErrorMessage>;
+using SingularMessage = std::variant<Integer, String, String, ErrorMessage>;
 using MessageArray = std::optional<std::pmr::vector<SingularMessage>>;
 using Message = std::variant<SingularMessage, InlineMessage, MessageArray>;
 

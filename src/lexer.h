@@ -4,20 +4,38 @@
 
 #include <array>
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/experimental/channel.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/system/detail/error_code.hpp>
 #include <charconv>
 #include <concepts>
 #include <cstddef>
+#include <memory_resource>
 #include <optional>
 #include <string_view>
-#include <vector>
-
-#include "message.h"
+#include <variant>
 
 namespace redispp {
+enum class TokenTypeMarker : char { SimpleString = '+', Error = '-', Integer = ':', BulkString = '$', Array = '*' };
+static constexpr std::string_view MessagePartTerminator = "\r\n";
+
+using Integer = std::int64_t;
+using String = std::pmr::string;
+
+struct null {};
+struct end_of_command {};
+struct ErrorMessage {
+  String msg;
+};
+
+using Token = std::variant<Integer, String, ErrorMessage, null, end_of_command>;
+
 template <typename T>
 concept IReader = requires(T a, char* buf, size_t len) {
   { ReadSome(a, buf, len) } -> std::same_as<boost::asio::awaitable<size_t>>;
 };
+
+using Channel = boost::asio::experimental::channel<void(boost::system::error_code, Token)>;
 
 template <IReader Reader>
 class Parser {
@@ -26,34 +44,33 @@ class Parser {
   explicit Parser(Reader& reader, std::pmr::memory_resource& alloc = *std::pmr::get_default_resource())
       : m_alloc(&alloc), m_reader(&reader) {}
 
-  auto ParseMessage() -> boost::asio::awaitable<Message> {
+  auto ParseMessage(Channel& ch) -> boost::asio::awaitable<void> {
     const auto msg_type = co_await read_msg_type_marker();
     if (!msg_type) {
-      co_return co_await read_inline_command();
-    }
-    if (*msg_type != TokenTypeMarker::Array) {
-      co_return co_await read_single_message(*msg_type);
-    }
-
-    const auto count = co_await read_integer();
-    if (count < 0) {
-      co_return MessageArray{};
-    }
-    std::pmr::vector<SingularMessage> msgs(count, m_alloc);
-
-    for (auto& msg : msgs) {
-      const auto msg_type = co_await read_msg_type_marker();
-      if (!msg_type) {
-        throw std::runtime_error("Encountered inline command inside array");
+      co_await send_inline_command(ch);
+    } else if (*msg_type != TokenTypeMarker::Array) {
+      co_await send_token(co_await read_single_token(*msg_type), ch);
+    } else {
+      const auto count = co_await read_integer();
+      if (count > 0) {
+        for (Integer i = 0; i < count; i++) {
+          const auto msg_type = co_await read_msg_type_marker();
+          if (!msg_type) {
+            throw std::runtime_error("Encountered inline command inside array");
+          }
+          co_await send_token(co_await read_single_token(*msg_type), ch);
+        }
       }
-      msg = co_await read_single_message(*msg_type);
     }
-
-    co_return std::move(msgs);
+    co_return co_await send_token(end_of_command{}, ch);
   }
 
  private:
-  auto read_single_message(TokenTypeMarker msg_type) -> boost::asio::awaitable<SingularMessage> {
+  auto send_token(Token tok, Channel& ch) -> boost::asio::awaitable<void> {
+    co_await ch.async_send({}, std::move(tok), boost::asio::use_awaitable);
+  }
+
+  auto read_single_token(TokenTypeMarker msg_type) -> boost::asio::awaitable<Token> {
     switch (msg_type) {
       using enum TokenTypeMarker;
 
@@ -98,9 +115,9 @@ class Parser {
     co_return msg_type;
   }
 
-  auto read_bulk_string(ptrdiff_t len) -> boost::asio::awaitable<String> {
+  auto read_bulk_string(ptrdiff_t len) -> boost::asio::awaitable<Token> {
     if (len == -1) {
-      co_return std::nullopt;
+      co_return null{};
     }
     String str(len + MessagePartTerminator.length(), '\0', m_alloc);
     size_t copied = 0;
@@ -134,23 +151,22 @@ class Parser {
     co_return i;
   }
 
-  auto read_inline_command() -> boost::asio::awaitable<InlineMessage> {
+  auto send_inline_command(Channel& ch) -> boost::asio::awaitable<void> {
     auto msg_str = co_await read_one_part();
-    std::pmr::vector<std::string_view> parts(m_alloc);
     std::string_view msg_ptr = msg_str;
     constexpr auto Space = ' ';
 
     while (true) {
       auto pos = msg_ptr.find(Space);
       if (pos == std::string_view::npos) {
-        parts.push_back(msg_ptr);
+        co_await ch.async_send({}, String(msg_ptr), boost::asio::use_awaitable);
         break;
       }
-      parts.push_back(msg_ptr.substr(0, pos));
+      co_await ch.async_send({}, String(msg_ptr.substr(0, pos)), boost::asio::use_awaitable);
       msg_ptr = msg_ptr.substr(pos + 1);
     }
 
-    co_return InlineMessage{std::move(msg_str), std::move(parts)};
+    co_await ch.async_send({}, end_of_command{}, boost::asio::use_awaitable);
   }
 
   auto read_one_part() -> boost::asio::awaitable<String> {
@@ -218,75 +234,4 @@ class Parser {
   size_t m_buflen = 0;
   Reader* m_reader;
 };
-
-template <typename T>
-concept IWriter = requires(T a, const char* buf, size_t len) {
-  { Write(a, buf, len) } -> std::same_as<boost::asio::awaitable<void>>;
-};
-
-auto Write(IWriter auto& writer, const String& s) -> boost::asio::awaitable<void> {
-  const auto msg_type = static_cast<char>(TokenTypeMarker::SimpleString);
-
-  co_await Write(writer, &msg_type, sizeof(msg_type));
-  co_await Write(writer, s.data(), s.length());
-  co_await Write(writer, MessagePartTerminator.data(), MessagePartTerminator.length());
-}
-
-auto Write(IWriter auto& writer, const String& s) -> boost::asio::awaitable<void> {
-  if (!s) {
-    const std::string_view NullString = "$-1";
-    co_await Write(writer, NullString.data(), NullString.length());
-    co_await Write(writer, MessagePartTerminator.data(), MessagePartTerminator.length());
-    co_return;
-  }
-  std::array<char, 30> length{};
-
-  fmt::format_to(
-      length.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::BulkString), s->length(), MessagePartTerminator);
-  co_await Write(writer, length.data(), length.size());
-  co_await Write(writer, s->data(), s->length());
-  co_await Write(writer, MessagePartTerminator.data(), MessagePartTerminator.length());
-}
-
-auto Write(IWriter auto& writer, const Integer& i) -> boost::asio::awaitable<void> {
-  std::array<char, 30> int_str{};
-
-  fmt::format_to(int_str.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::Integer), i, MessagePartTerminator);
-  co_await Write(writer, int_str.data(), int_str.size());
-}
-
-auto Write(IWriter auto& writer, const ErrorMessage& msg) -> boost::asio::awaitable<void> {
-  const auto msg_type = static_cast<char>(TokenTypeMarker::Error);
-
-  co_await Write(writer, &msg_type, sizeof(msg_type));
-  co_await Write(writer, msg.msg.data(), msg.msg.length());
-  co_await Write(writer, MessagePartTerminator.data(), MessagePartTerminator.length());
-}
-
-auto Write(IWriter auto& writer, const SingularMessage& msg) -> boost::asio::awaitable<void> {
-  co_await std::visit([&](const auto& msg) { return Write(writer, msg); }, msg);
-}
-
-auto Write(IWriter auto& writer, const MessageArray& msgs) -> boost::asio::awaitable<void> {
-  if (!msgs) {
-    const std::string_view NullArray = "*-1";
-    co_await Write(writer, NullArray.data(), NullArray.length());
-    co_await Write(writer, MessagePartTerminator.data(), MessagePartTerminator.length());
-    co_return;
-  }
-
-  std::array<char, 30> count{};
-
-  fmt::format_to(
-      count.data(), "{}{}{}", static_cast<char>(TokenTypeMarker::Array), msgs->size(), MessagePartTerminator);
-  co_await Write(writer, count.data(), count.size());
-
-  for (const auto& msg : *msgs) {
-    co_await Write(writer, msg);
-  }
-}
-
-auto Write(IWriter auto& writer, const Message& msg) -> boost::asio::awaitable<void> {
-  co_await std::visit([&](const auto& msg) { return Write(writer, msg); }, msg);
-}
 }  // namespace redispp
