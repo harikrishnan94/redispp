@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "message.h"
+#include "string_hash.h"
 
 namespace redispp {
 class DB;
@@ -81,16 +82,7 @@ class DB {
   }
 
  private:
-  struct string_hash {
-    using is_transparent = void;
-    [[nodiscard]] auto operator()(const char *txt) const -> size_t { return std::hash<std::string_view>{}(txt); }
-    [[nodiscard]] auto operator()(std::string_view txt) const -> size_t { return std::hash<std::string_view>{}(txt); }
-    [[nodiscard]] auto operator()(const std::pmr::string &txt) const -> size_t {
-      return std::hash<std::pmr::string>{}(txt);
-    }
-  };
-
   std::pmr::memory_resource *m_alloc;
-  std::pmr::unordered_map<std::pmr::string, std::pmr::string, string_hash, std::equal_to<>> m_key_vals{m_alloc};
+  std::pmr::unordered_map<std::pmr::string, std::pmr::string, utils::string_hash, std::equal_to<>> m_key_vals{m_alloc};
 };
 }  // namespace redispp
