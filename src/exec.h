@@ -1,6 +1,7 @@
 #pragma once
 
 #include "resp_serde.h"
+
 namespace redispp {
 namespace exec {
 struct AppendCmd {
@@ -97,12 +98,25 @@ using Command = std::variant<AppendCmd,
                              SetRangeCmd,
                              StrLenCmd>;
 }  // namespace exec
+
+class Response;
 class DB;
 class Client;
 
-auto Execute(DB &db,
-             Client &client,
-             resp::Deserializer &query_reader,
-             resp::Serializer &resp_sender,
-             redispp::resp::Channel &ch) -> boost::asio::awaitable<void>;
+auto Execute(DB &db, Client &client, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response>;
+
+class Response {
+ public:
+  auto Serialize(resp::Serializer &resp_sender) const -> boost::asio::awaitable<void>;
+
+ private:
+  explicit Response(bool is_array = false) : m_is_array(is_array) {}
+
+  void Push(resp::Token tok);
+
+  friend auto Execute(DB &db, Client &client, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response>;
+
+  std::vector<resp::Token> m_tokens;
+  bool m_is_array = false;
+};
 }  // namespace redispp

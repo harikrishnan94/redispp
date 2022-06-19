@@ -1,6 +1,7 @@
 #include "exec.h"
 
 #include <boost/asio/awaitable.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <variant>
@@ -91,22 +92,34 @@ namespace redispp {
 //   return SingularMessage{ErrorMessage{e.error}};
 // }
 
-auto reply(resp::Serializer &resp_sender, redispp::resp::Channel &ch) -> boost::asio::awaitable<void> {
-  while (true) {
-    auto tok = co_await ch.async_receive(boost::asio::use_awaitable);
+void Response::Push(resp::Token tok) { m_tokens.push_back(std::move(tok)); }
+
+auto Response::Serialize(resp::Serializer &resp_sender) const -> boost::asio::awaitable<void> {
+  if (m_is_array) {
+    co_await resp_sender.SerializeArrayHeader(m_tokens.size());
+  }
+
+  for (const auto &tok : m_tokens) {
     co_await resp_sender.Serialize(tok);
-    if (std::holds_alternative<resp::EndOfCommand_t>(tok)) {
-      break;
-    }
   }
 }
 
-auto Execute(DB & /*db*/,
-             Client & /*client*/,
-             resp::Deserializer &query_reader,
-             resp::Serializer &resp_sender,
-             redispp::resp::Channel &ch) -> boost::asio::awaitable<void> {
-  co_await (query_reader.SendTokens(ch) && reply(resp_sender, ch));
-}
+auto Execute(DB & /*db*/, Client & /*client*/, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response> {
+  auto executor = co_await boost::asio::this_coro::executor;
+  redispp::resp::Channel ch(executor);
+  Response response(true);
 
+  co_spawn(executor, query_reader.SendTokens(ch), boost::asio::detached);
+
+  while (true) {
+    auto tok = co_await ch.async_receive(boost::asio::use_awaitable);
+    if (std::holds_alternative<resp::EndOfCommand_t>(tok)) {
+      break;
+    }
+
+    response.Push(std::move(tok));
+  }
+
+  co_return response;
+}
 }  // namespace redispp

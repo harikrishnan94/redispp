@@ -39,11 +39,16 @@ auto run_session(redispp::DB& db, tcp::socket socket) -> awaitable<void> {
     auto executor = co_await this_coro::executor;
     redispp::Client client;
     redispp::resp::Deserializer deserializer(socket);
-    redispp::resp::Channel ch(executor);
 
     for (;;) {
-      redispp::resp::Serializer serializer(socket);
-      co_spawn(executor, redispp::Execute(db, client, deserializer, serializer, ch), detached);
+      auto response = co_await redispp::Execute(db, client, deserializer);
+      co_spawn(
+          executor,
+          [response = std::move(response), &socket]() -> awaitable<void> {
+            redispp::resp::Serializer serializer(socket);
+            co_return co_await response.Serialize(serializer);
+          },
+          detached);
     }
   } catch (std::exception& e) {
     fmt::print("echo Exception: {}\n", e.what());
