@@ -81,6 +81,8 @@ class DB {
     return ret;
   }
 
+  auto NewString(std::string_view str = "") -> std::pmr::string { return std::pmr::string{str, m_alloc}; }
+
  private:
   std::pmr::memory_resource *m_alloc;
   std::pmr::unordered_map<std::pmr::string, std::pmr::string, utils::string_hash, std::equal_to<>> m_key_vals{m_alloc};

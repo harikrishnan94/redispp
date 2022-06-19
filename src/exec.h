@@ -38,8 +38,8 @@ struct GetDelCmd {
 
 struct GetRangeCmd {
   resp::String key;
-  size_t start;
-  size_t end;
+  resp::Integer start;
+  resp::Integer end;
 
   static constexpr std::string_view Name = "GETRANGE";
 };
@@ -71,14 +71,6 @@ struct SetCmd {
   static constexpr std::string_view Name = "SET";
 };
 
-struct SetRangeCmd {
-  resp::String key;
-  size_t offset;
-  resp::String val;
-
-  static constexpr std::string_view Name = "SETRANGE";
-};
-
 struct StrLenCmd {
   resp::String key;
 
@@ -95,28 +87,25 @@ using Command = std::variant<AppendCmd,
                              IncrCmd,
                              IncrByCmd,
                              SetCmd,
-                             SetRangeCmd,
                              StrLenCmd>;
 }  // namespace exec
 
-class Response;
 class DB;
 class Client;
 
-auto Execute(DB &db, Client &client, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response>;
-
 class Response {
  public:
+  explicit Response(bool is_array = false) : m_is_array(is_array) {}
+
+  Response(resp::Token tok) { m_tokens.push_back(std::move(tok)); }  // NOLINT(hicpp-explicit-conversions)
+
+  void Push(resp::Token tok);
   auto Serialize(resp::Serializer &resp_sender) const -> boost::asio::awaitable<void>;
 
  private:
-  explicit Response(bool is_array = false) : m_is_array(is_array) {}
-
-  void Push(resp::Token tok);
-
-  friend auto Execute(DB &db, Client &client, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response>;
-
   std::vector<resp::Token> m_tokens;
   bool m_is_array = false;
 };
+
+auto Execute(DB &db, Client &client, resp::Deserializer &query_reader) -> boost::asio::awaitable<Response>;
 }  // namespace redispp

@@ -195,7 +195,7 @@ CheckOptions:
   - key:             concurrency-mt-unsafe.FunctionSet
     value:           any
   - key:             readability-identifier-length.IgnoredExceptionVariableNames
-    value:           '^[e]$'
+    value:           '^[e]'
   - key:             google-readability-braces-around-statements.ShortStatementLines
     value:           '1'
   - key:             bugprone-reserved-identifier.AllowedIdentifiers
@@ -215,7 +215,7 @@ CheckOptions:
   - key:             modernize-use-equals-delete.IgnoreMacros
     value:           'true'
   - key:             readability-identifier-length.IgnoredVariableNames
-    value:           ''
+    value:           '0'
   - key:             readability-magic-numbers.IgnoreAllFloatingPointValues
     value:           'false'
   - key:             cppcoreguidelines-pro-bounds-constant-array-index.IncludeStyle
@@ -235,7 +235,7 @@ CheckOptions:
   - key:             readability-uniqueptr-delete-release.PreferResetCall
     value:           'false'
   - key:             readability-identifier-length.MinimumExceptionNameLength
-    value:           '2'
+    value:           '0'
   - key:             misc-definitions-in-headers.UseHeaderFileExtension
     value:           'true'
   - key:             google-readability-namespace-comments.SpacesBeforeComments
@@ -291,7 +291,7 @@ CheckOptions:
   - key:             cert-dcl37-c.AggressiveDependentMemberLookup
     value:           'false'
   - key:             readability-identifier-length.MinimumLoopCounterNameLength
-    value:           '2'
+    value:           '0'
   - key:             modernize-use-emplace.SmartPointers
     value:           '::std::shared_ptr;::std::unique_ptr;::std::auto_ptr;::std::weak_ptr'
   - key:             cppcoreguidelines-no-malloc.Deallocations
@@ -367,7 +367,7 @@ CheckOptions:
   - key:             cert-err61-cpp.WarnOnLargeObjects
     value:           'false'
   - key:             readability-identifier-length.MinimumParameterNameLength
-    value:           '3'
+    value:           '0'
   - key:             modernize-use-emplace.TupleTypes
     value:           '::std::pair;::std::tuple'
   - key:             hicpp-use-emplace.IgnoreImplicitConstructors
@@ -537,7 +537,7 @@ CheckOptions:
   - key:             readability-implicit-bool-conversion.AllowPointerConditions
     value:           'false'
   - key:             readability-identifier-length.MinimumVariableNameLength
-    value:           '3'
+    value:           '0'
   - key:             hicpp-use-emplace.TupleTypes
     value:           '::std::pair;::std::tuple'
   - key:             cppcoreguidelines-narrowing-conversions.WarnOnEquivalentBitWidth
