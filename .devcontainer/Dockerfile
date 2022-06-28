@@ -26,13 +26,6 @@ RUN cd /tmp && wget -c \
 # VCPKG
 # Add vcpkg to PATH
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
-ENV VCPKG_ROOT=/vcpkg
-ENV PATH="${PATH}:${VCPKG_ROOT}"
-
-ARG VCPKG_RELEASE=2022.05.10
-RUN wget -c https://github.com/microsoft/vcpkg/archive/refs/tags/${VCPKG_RELEASE}.zip -O vcpkg.zip \
-    && unzip -qq vcpkg.zip && mv vcpkg-${VCPKG_RELEASE} vcpkg \
-    && cd vcpkg && ./bootstrap-vcpkg.sh && rm ../vcpkg.zip
 
 RUN vcpkg integrate install && vcpkg integrate bash
 
